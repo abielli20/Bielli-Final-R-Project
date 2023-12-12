@@ -1,0 +1,313 @@
+
+---
+title: "Final Project R"
+author: "Alessandra Bielli"
+date: "2023-12-07"
+output:
+  html_document:
+    code_folding: hide
+    self_contained: true
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library (dplyr)
+library(tidyverse)
+library(readr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+```
+ 
+## Step 1: Load the dataset into RStudio and convert to a tibble
+```{r}
+# Load the CSV file into a data frame
+setwd("/Users/Allie/Desktop/")
+data <- read.csv("Austin_Animal_Center_Outcomes.csv")
+
+# Convert to a tibble (optional)
+animal_tibble <- as_tibble(data)
+
+# Remove columns Date/time and Outcome.Subtype
+animal_tibble <- animal_tibble %>%
+  select(-DateTime, -Outcome.Subtype)
+
+# Display the first few rows of the updated tibble
+head(animal_tibble)
+```
+## Step 2: Tidy the data for easier analysis using  tidyr and dplyr
+```{r}
+# Update column names in animal_tibble
+animal_tibble <- animal_tibble %>%
+  rename(
+    Animal_ID = Animal.ID,  
+    Date_of_Birth = Date.of.Birth,
+    Outcome_Type = Outcome.Type,
+    Animal_Type = Animal.Type,
+    Sex_At_Outcome = Sex.upon.Outcome,
+    Year_At_Outcome = Age.upon.Outcome,
+    Date_of_Outcome = MonthYear
+  )
+
+# Remove rows with Animal_Type 'Other'
+cleaned_animal_tibble <- animal_tibble %>%
+  filter(Animal_Type != "Other")
+
+# Fill remaining blank spaces with "Unknown"
+filled_cleaned_tibble <- cleaned_animal_tibble %>%
+  mutate_all(~ifelse(. == "" | is.na(.), "Unknown", .))
+
+# Threshold for unknown values
+threshold <- 1  # Define the threshold here
+
+# Remove rows with more than 'threshold' unknown values
+cleaned_animal_tibble_filtered <- cleaned_animal_tibble %>%
+  filter(rowSums(. == "" | is.na(.)) <= threshold)
+
+# Sort by 'MonthYear' 
+filled_cleaned_tibble <- filled_cleaned_tibble %>%
+  arrange(Date_of_Outcome, Name)
+
+# Convert Date_of_Birth column to Date format
+filled_cleaned_tibble <- filled_cleaned_tibble %>%
+  mutate(Date_of_Birth = as.Date(Date_of_Birth, format = "%m/%d/%y"))
+
+# Check unique values in Year_At_Outcome column
+unique(filled_cleaned_tibble$Year_At_Outcome)
+
+# Filter rows with negative ages
+filtered_data <- filled_cleaned_tibble %>%
+  filter(Year_At_Outcome >= 0)
+
+# Clean Year_At_Outcome column for numeric analysis
+filled_cleaned_tibble <- filled_cleaned_tibble %>%
+  mutate(Year_At_Outcome = as.numeric(gsub(" years", "", Year_At_Outcome)))
+
+# Check unique values in Year_At_Outcome column that couldn't be converted
+non_convertible_values <- unique(filled_cleaned_tibble[is.na(as.numeric(gsub(" years", "", filled_cleaned_tibble$Year_At_Outcome))), "Year_At_Outcome"])
+non_convertible_values
+
+# Now, Year_At_Outcome can be used for numerical analysis
+
+# Remove rows with NA in Year_At_Outcome column
+filled_cleaned_tibble <- filled_cleaned_tibble %>%
+  filter(!is.na(Year_At_Outcome))
+
+# Convert Date_of_Outcome column to desired format
+library(zoo)
+filled_cleaned_tibble <- filled_cleaned_tibble %>%
+  mutate( Date_of_Outcome = as.yearmon(Date_of_Outcome, "%b-%y")) %>%
+  mutate( Date_of_Outcome = format(as.Date(Date_of_Outcome), "%Y-%m"))
+
+# View the first few rows after sorting
+head(filled_cleaned_tibble)
+
+# Check the number of rows in the filled_cleaned_tibble dataset
+n_rows <- nrow(filled_cleaned_tibble)
+print(n_rows)
+```
+
+## Step 3: Display a bar chart showing count for each animal type since 2013
+```{r}
+library(ggplot2)
+
+# Create a bar plot for count of each animal type
+ggplot(filled_cleaned_tibble, aes(x = Animal_Type)) +
+  geom_bar(fill = "skyblue", color = "black") +
+  geom_text(
+    aes(label = after_stat(count)),  # Use after_stat(count) instead of stat(count)
+    stat = "count", 
+    vjust = -0.5
+  ) +
+  labs(title = "Count of Each Animal Type", x = "Animal Type", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability if needed
+```
+
+## Step 4: Create a histogram displaying the outcomes for birds and livestock
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Filter data for birds and livestock
+birds_livestock_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Bird", "Livestock"))
+
+# Calculate total counts for birds and livestock
+total_counts <- birds_livestock_data %>%
+  count(Animal_Type)
+
+# Calculate percentages for each outcome of birds and livestock
+outcome_percentages <- birds_livestock_data %>%
+  group_by(Animal_Type, Outcome_Type) %>%
+  summarise(count = n()) %>%
+  left_join(total_counts, by = "Animal_Type") %>%
+  mutate(percentage = (count / n) * 100) %>%
+  filter(percentage != 0)  # Exclude outcomes with 0%
+
+# Create a bar plot for outcome percentages of birds and livestock
+ggplot(outcome_percentages, aes(x = Outcome_Type, y = percentage, fill = Animal_Type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(aes(label = paste0(round(percentage), "%")),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(title = "Outcome Percentages of Birds and Livestock",
+       x = "Outcome Type", y = "Percentage") +
+  theme_minimal()
+```
+
+## Step 5: Create a histogram displaying the outcomes for cats and dogs  
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Filter data for cats and dogs
+cats_dogs_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Cat", "Dog"))
+
+# Calculate outcome percentages for cats and dogs
+outcome_percentages <- cats_dogs_data %>%
+  count(Animal_Type, Outcome_Type) %>%
+  group_by(Animal_Type) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+# Create a bar plot for outcome percentages of cats and dogs with filtered text labels
+ggplot(outcome_percentages, aes(x = Outcome_Type, y = percentage, fill = Animal_Type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(data = outcome_percentages %>%
+              filter(percentage >= 0.01),  # Filter labels below 0.01%
+            aes(label = paste0(round(percentage), "%")),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(title = "Outcome Percentages for Cats and Dogs",
+       x = "Outcome Type", y = "Percentage") +
+  theme_minimal()
+```
+
+## Step 6: Create a violin graph displaying the age distribution of cats and dogs
+```{r}
+ library(ggplot2)
+
+# Filter the data for relevant columns and animal types
+age_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Cat", "Dog")) %>%
+  select(Animal_Type, Year_At_Outcome)
+
+# Create a violin plot for age distribution by animal type
+ggplot(age_data, aes(x = Animal_Type, y = Year_At_Outcome, fill = Animal_Type)) +
+  geom_violin() +
+  labs(title = "Age Distribution by Animal Type",
+       x = "Animal Type", y = "Age at Outcome") +
+  theme_minimal()
+```
+
+## Display a histogram showing age group percentages among cats and dogs 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Filter data for cats and dogs
+cats_dogs_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Cat", "Dog"))
+
+# Calculate total counts for cats and dogs
+total_counts <- cats_dogs_data %>%
+  count(Animal_Type)
+
+# Define age groups
+cats_dogs_data <- cats_dogs_data %>%
+  mutate(Age_Group = cut(Year_At_Outcome, breaks = c(1, 3, 5, 10, 15, 20, Inf),
+                         labels = c("1-3", "3-5", "5-10", "10-15", "15-20", "20+"),
+                         include.lowest = TRUE))
+
+# Calculate percentages for each age group of cats and dogs
+age_group_percentages <- cats_dogs_data %>%
+  group_by(Animal_Type, Age_Group) %>%
+  summarise(count = n()) %>%
+  left_join(total_counts, by = "Animal_Type") %>%
+  mutate(percentage = (count / n) * 100) %>%
+  filter(percentage != 0)  # Exclude age groups with 0%
+
+# Create a bar plot for age group percentages of cats and dogs
+ggplot(age_group_percentages, aes(x = Age_Group, y = percentage, fill = Animal_Type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(aes(label = paste0(round(percentage), "%")),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(title = "Age Group Percentages of Cats and Dogs",
+       x = "Age Group", y = "Percentage") +
+  theme_minimal()
+```
+
+## Display percentage distribution of age groups for cats and dogs within each outcome 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Filter data for cats and dogs
+cats_dogs_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Cat", "Dog"))
+
+# Define age groups
+cats_dogs_data <- cats_dogs_data %>%
+  mutate(Age_Group = cut(Year_At_Outcome, breaks = c(1, 3, 5, 10, 15, 20, Inf),
+                         labels = c("1-3", "3-5", "5-10", "10-15", "15-20", "20+"),
+                         include.lowest = TRUE))
+
+# Calculate percentages for each age group of cats and dogs within each outcome
+age_group_percentages <- cats_dogs_data %>%
+  count(Outcome_Type, Animal_Type, Age_Group) %>%
+  group_by(Outcome_Type, Animal_Type) %>%
+  mutate(percentage = n / sum(n) * 100) %>%
+  filter(!is.na(Age_Group) & percentage != 0)  # Exclude rows with NA in Age_Group and 0% percentage
+
+# Create a bar plot for age group percentages of cats and dogs within each outcome
+ggplot(age_group_percentages, aes(x = Age_Group, y = percentage, fill = Animal_Type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  facet_wrap(~ Outcome_Type, scales = "free_x", strip.position = "bottom") +
+  geom_text(aes(label = paste0(round(percentage), "%")),
+            position = position_dodge(width = 0.8), vjust = -0.8, size = 2) +
+  labs(title = "Percentage Distribution of Age Groups for Cats and Dogs within Each Outcome",
+       x = "Age Group", y = "Percentage") +
+  theme_minimal()
+```
+
+
+## Display a line graph and scatter plot showing outcome trends for cats and dogs over time 
+```{r}
+library(dplyr)
+library(ggplot2)
+library(zoo)
+
+# Filter data for cats and dogs
+cats_dogs_data <- filled_cleaned_tibble %>%
+  filter(Animal_Type %in% c("Cat", "Dog"))
+
+# Extract the year from the Date_of_Outcome column
+cats_dogs_data <- cats_dogs_data %>%
+  mutate(Year = as.yearmon(Date_of_Outcome))
+
+# Calculate outcome percentages for cats and dogs over years
+outcome_percentages_over_time <- cats_dogs_data %>%
+  count(Animal_Type, Year, Outcome_Type) %>%
+  group_by(Animal_Type, Year) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+# Create a time series plot for outcome percentages of cats and dogs over years
+ggplot(outcome_percentages_over_time, aes(x = Year, y = percentage, color = Outcome_Type)) +
+  geom_line() +
+  facet_wrap(~Animal_Type, scales = "free_y") +
+  labs(title = "Outcome Trends of Cats and Dogs Over Time",
+       x = "Year", y = "Percentage") +
+  theme_minimal()
+
+# Assuming you've previously filtered and manipulated the data
+
+# Create a scatter plot for outcome percentages of cats and dogs over years
+ggplot(outcome_percentages_over_time, aes(x = Year, y = percentage, color = Outcome_Type)) +
+  geom_point() +
+  facet_wrap(~Animal_Type, scales = "free_y") +
+  labs(title = "Outcome Trends of Cats and Dogs Over Time",
+       x = "Year", y = "Percentage") +
+  theme_minimal()
+
+```
